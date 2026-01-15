@@ -129,71 +129,169 @@ def uye_detay_getir(tcno):
         return None
 
 
+
 def ogrenci_ekle(tcno, ad, soyad, eposta, telno, ogrno, sinif_duzeyi, okul_bilgisi=None):
-    """Yeni öğrenci üye ekler (SQL prosedürü kullanır)."""
+    """Yeni öğrenci üye ekler - Tablo mirası kullanıldığında SADECE alt tabloya eklenir."""
     conn = baglanti_kur()
     if conn is None:
         return {"durum": "Hata", "mesaj": "Bağlantı kurulamadı."}
     
     try:
         cur = conn.cursor()
+        
+        # TC kontrolü - uye tablosundan kontrol et (miras sayesinde alt tablolarda da var)
+        cur.execute("SELECT COUNT(*) FROM uye WHERE tcno = %s;", (tcno,))
+        if cur.fetchone()[0] > 0:
+            return {"durum": "Hata", "mesaj": f"Bu TC Kimlik No ({tcno}) zaten sistemde kayıtlı!"}
+        
+        # SADECE ogrenci tablosuna ekle - uye tablosu miras yoluyla otomatik dolar
         cur.execute("""
-            CALL sp_ogrenci_ekle(%s, %s, %s, %s, %s, %s, %s, %s);
+            INSERT INTO ogrenci (tcno, adi, soyadi, eposta, telno, ogrno, sinifduzeyi, okulbilgisi)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s);
         """, (tcno, ad, soyad, eposta, telno, ogrno, sinif_duzeyi, okul_bilgisi))
+        
+        # 👇👇👇 YENİ KONTROL: uyelik tablosunda zaten var mı?
+        cur.execute("SELECT COUNT(*) FROM uyelik WHERE tcno = %s;", (tcno,))
+        if cur.fetchone()[0] == 0:
+            # Eğer yoksa ekle
+            cur.execute("""
+                INSERT INTO uyelik (tcno, max_odunc_limit)
+                VALUES (%s, 3);
+            """, (tcno,))
+        else:
+            # Eğer varsa, sadece limiti güncelle (isteğe bağlı)
+            cur.execute("""
+                UPDATE uyelik SET max_odunc_limit = 3 WHERE tcno = %s;
+            """, (tcno,))
         
         conn.commit()
         return {"durum": "Başarılı", "mesaj": f"Öğrenci üye eklendi: {ad} {soyad}"}
+        
+    except psycopg2.IntegrityError as e:
+        conn.rollback()
+        error_msg = str(e)
+        if "duplicate key" in error_msg.lower() or "unique" in error_msg.lower():
+            return {"durum": "Hata", "mesaj": f"Bu TC Kimlik No ({tcno}) veya Öğrenci No ({ogrno}) zaten kayıtlı!"}
+        elif "not-null" in error_msg.lower() or "null value" in error_msg.lower():
+            return {"durum": "Hata", "mesaj": f"Gerekli alan eksik: {error_msg}"}
+        return {"durum": "Hata", "mesaj": f"Veritabanı hatası: {error_msg}"}
+        
     except psycopg2.Error as e:
         conn.rollback()
-        return {"durum": "Hata", "mesaj": "Aynı TC No'ya sahip bir kullanıcı zaten var."}
+        return {"durum": "Hata", "mesaj": f"Veritabanı hatası: {str(e)}"}
+        
     finally:
         cur.close()
-        conn.close()
+        conn.close()        
 
 
 def ogretmen_ekle(tcno, ad, soyad, eposta, telno, brans, isyeri=None):
-    """Yeni öğretmen üye ekler (SQL prosedürü kullanır)."""
+    """Yeni öğretmen üye ekler - Tablo mirası kullanıldığında SADECE alt tabloya eklenir."""
     conn = baglanti_kur()
     if conn is None:
         return {"durum": "Hata", "mesaj": "Bağlantı kurulamadı."}
     
     try:
         cur = conn.cursor()
+        
+        # TC kontrolü
+        cur.execute("SELECT COUNT(*) FROM uye WHERE tcno = %s;", (tcno,))
+        if cur.fetchone()[0] > 0:
+            return {"durum": "Hata", "mesaj": f"Bu TC Kimlik No ({tcno}) zaten sistemde kayıtlı!"}
+
+        # Branş kontrolü
+        if not brans or not brans.strip():
+            return {"durum": "Hata", "mesaj": "Branş bilgisi boş olamaz!"}
+        
+        # SADECE ogretmen tablosuna ekle - uye tablosu miras yoluyla otomatik dolar
         cur.execute("""
-            CALL sp_ogretmen_ekle(%s, %s, %s, %s, %s, %s, %s);
-        """, (tcno, ad, soyad, eposta, telno, brans, isyeri))
+            INSERT INTO ogretmen (tcno, adi, soyadi, eposta, telno, brans, isyeri)
+            VALUES (%s, %s, %s, %s, %s, %s, %s);
+        """, (tcno, ad, soyad, eposta, telno, brans.strip(), isyeri))
+        
+        # 👇👇👇 YENİ KONTROL: uyelik tablosunda zaten var mı?
+        cur.execute("SELECT COUNT(*) FROM uyelik WHERE tcno = %s;", (tcno,))
+        if cur.fetchone()[0] == 0:
+            cur.execute("""
+                INSERT INTO uyelik (tcno, max_odunc_limit)
+                VALUES (%s, 5);
+            """, (tcno,))
+        else:
+            cur.execute("""
+                UPDATE uyelik SET max_odunc_limit = 5 WHERE tcno = %s;
+            """, (tcno,))
         
         conn.commit()
         return {"durum": "Başarılı", "mesaj": f"Öğretmen üye eklendi: {ad} {soyad}"}
+        
+    except psycopg2.IntegrityError as e:
+        conn.rollback()
+        error_msg = str(e)
+        if "duplicate key" in error_msg.lower() or "unique" in error_msg.lower():
+            return {"durum": "Hata", "mesaj": f"Bu TC Kimlik No ({tcno}) zaten sistemde kayıtlı!"}
+        elif "not-null" in error_msg.lower() or "null value" in error_msg.lower():
+            return {"durum": "Hata", "mesaj": f"Gerekli alan eksik: {error_msg}"}
+        return {"durum": "Hata", "mesaj": f"Veritabanı hatası: {error_msg}"}
+        
     except psycopg2.Error as e:
         conn.rollback()
-        return {"durum": "Hata", "mesaj": "Aynı TC No'ya sahip bir kullanıcı zaten var."}
+        return {"durum": "Hata", "mesaj": f"Veritabanı hatası: {str(e)}"}
+        
     finally:
         cur.close()
         conn.close()
 
-
 def diger_uye_ekle(tcno, ad, soyad, eposta, telno, gerekce, gecerlilik_tarihi):
-    """Diğer üye ekler (SQL prosedürü kullanır)."""
+    """Diğer üye ekler - Tablo mirası kullanıldığında SADECE alt tabloya eklenir."""
     conn = baglanti_kur()
     if conn is None:
         return {"durum": "Hata", "mesaj": "Bağlantı kurulamadı."}
     
     try:
         cur = conn.cursor()
+        
+        # TC kontrolü
+        cur.execute("SELECT COUNT(*) FROM uye WHERE tcno = %s;", (tcno,))
+        if cur.fetchone()[0] > 0:
+            return {"durum": "Hata", "mesaj": f"Bu TC Kimlik No ({tcno}) zaten sistemde kayıtlı!"}
+        
+        # SADECE diger_uye tablosuna ekle - uye tablosu miras yoluyla otomatik dolar
         cur.execute("""
-            CALL sp_diger_uye_ekle(%s, %s, %s, %s, %s, %s, %s);
+            INSERT INTO diger_uye (tcno, adi, soyadi, eposta, telno, gerekce, gecerlilikbitistarihi)
+            VALUES (%s, %s, %s, %s, %s, %s, %s);
         """, (tcno, ad, soyad, eposta, telno, gerekce, gecerlilik_tarihi))
+        
+        # 👇👇👇 YENİ KONTROL: uyelik tablosunda zaten var mı?
+        cur.execute("SELECT COUNT(*) FROM uyelik WHERE tcno = %s;", (tcno,))
+        if cur.fetchone()[0] == 0:
+            cur.execute("""
+                INSERT INTO uyelik (tcno, max_odunc_limit)
+                VALUES (%s, 2);
+            """, (tcno,))
+        else:
+            cur.execute("""
+                UPDATE uyelik SET max_odunc_limit = 2 WHERE tcno = %s;
+            """, (tcno,))
         
         conn.commit()
         return {"durum": "Başarılı", "mesaj": f"Diğer üye eklendi: {ad} {soyad}"}
+        
+    except psycopg2.IntegrityError as e:
+        conn.rollback()
+        error_msg = str(e)
+        if "duplicate key" in error_msg.lower() or "unique" in error_msg.lower():
+            return {"durum": "Hata", "mesaj": f"Bu TC Kimlik No ({tcno}) zaten sistemde kayıtlı!"}
+        elif "not-null" in error_msg.lower() or "null value" in error_msg.lower():
+            return {"durum": "Hata", "mesaj": f"Gerekli alan eksik: {error_msg}"}
+        return {"durum": "Hata", "mesaj": f"Veritabanı hatası: {error_msg}"}
+        
     except psycopg2.Error as e:
         conn.rollback()
-        return {"durum": "Hata", "mesaj":"Aynı TC No'ya sahip bir kullanıcı zaten var."}
+        return {"durum": "Hata", "mesaj": f"Veritabanı hatası: {str(e)}"}
+        
     finally:
         cur.close()
         conn.close()
-
 
 def uye_guncelle(tcno, ad, soyad, eposta, telno):
     """Üye bilgilerini günceller (SQL prosedürü kullanır)."""
