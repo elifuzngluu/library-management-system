@@ -1,12 +1,8 @@
+import os
 import psycopg2
-from psycopg2 import extras
-from datetime import datetime, timedelta
+from dotenv import load_dotenv
 
-DB_ADI = "kutuphane_db"
-DB_KULLANICI = "postgres"
-DB_SIFRE = "2609" 
-DB_HOST = "localhost"
-DB_PORT = "5432"
+load_dotenv()
 
 def baglanti_kur():
     """PostgreSQL'e yeni bir bağlantı nesnesi döndürür."""
